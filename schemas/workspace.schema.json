@@ -1,0 +1,86 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "LLM Query-Clustering Evaluation Workspace v1",
+  "type": "object",
+  "required": ["schemaVersion", "runs", "examples", "metricDefinitions"],
+  "properties": {
+    "schemaVersion": { "const": 1 },
+    "runs": {
+      "type": "array",
+      "maxItems": 20000,
+      "items": {
+        "type": "object",
+        "required": ["run_id", "model", "dataset", "run_timestamp", "is_synthetic", "metric", "latency_unit", "latency_basis", "cost_basis", "cost_provenance"],
+        "properties": {
+          "run_id": { "type": "string", "minLength": 1, "maxLength": 256 },
+          "model": { "type": "string", "minLength": 1, "maxLength": 256 },
+          "model_version": { "type": ["string", "null"], "maxLength": 256 },
+          "model_config_id": { "type": ["string", "null"], "maxLength": 256 },
+          "dataset": { "type": "string", "minLength": 1, "maxLength": 256 },
+          "dataset_version": { "type": ["string", "null"], "maxLength": 256 },
+          "evaluation_set_id": { "type": ["string", "null"], "maxLength": 256 },
+          "evaluation_config_id": { "type": ["string", "null"], "maxLength": 256 },
+          "run_timestamp": { "type": "string", "format": "date-time" },
+          "seed": { "type": ["string", "null"], "maxLength": 256 },
+          "is_synthetic": { "type": "boolean" },
+          "metric": { "type": "string", "minLength": 1, "maxLength": 256 },
+          "score": { "type": ["number", "null"] },
+          "sample_size": { "type": ["integer", "null"], "minimum": 1 },
+          "metric_config_id": { "type": ["string", "null"], "maxLength": 256 },
+          "latency": { "type": ["number", "null"], "minimum": 0 },
+          "latency_unit": { "const": "ms" },
+          "latency_basis": { "enum": ["run_total", "example_mean", "example_p50", "example_p95", "unknown"] },
+          "cost": { "type": ["number", "null"], "minimum": 0 },
+          "cost_currency": { "type": ["string", "null"], "maxLength": 16 },
+          "cost_basis": { "enum": ["run_total", "per_work_item", "unknown"] },
+          "cost_provenance": { "enum": ["reported", "estimated", "unknown"] },
+          "work_item_count": { "type": ["integer", "null"], "minimum": 1 },
+          "work_item_unit": { "type": ["string", "null"], "maxLength": 256 },
+          "performance_context_id": { "type": ["string", "null"], "maxLength": 256 }
+        },
+        "additionalProperties": false
+      }
+    },
+    "examples": {
+      "type": "array",
+      "maxItems": 50000,
+      "items": {
+        "type": "object",
+        "required": ["run_id", "example_id", "query_text"],
+        "properties": {
+          "run_id": { "type": "string", "minLength": 1, "maxLength": 256 },
+          "example_id": { "type": "string", "minLength": 1, "maxLength": 256 },
+          "query_text": { "type": "string", "maxLength": 20000 },
+          "predicted_cluster_id": { "type": ["string", "null"], "maxLength": 256 },
+          "reference_cluster_id": { "type": ["string", "null"], "maxLength": 256 },
+          "latency_ms": { "type": ["number", "null"], "minimum": 0 },
+          "cost": { "type": ["number", "null"], "minimum": 0 },
+          "cost_currency": { "type": ["string", "null"], "maxLength": 16 }
+        },
+        "additionalProperties": false
+      }
+    },
+    "metricDefinitions": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["id", "name", "description", "direction", "unit", "scaleLabel"],
+        "properties": {
+          "id": { "type": "string", "minLength": 1 },
+          "name": { "type": "string" },
+          "description": { "type": "string" },
+          "direction": { "enum": ["higher", "lower"] },
+          "unit": { "type": "string" },
+          "scaleLabel": { "type": "string" },
+          "minExpected": { "type": ["number", "null"] },
+          "maxExpected": { "type": ["number", "null"] },
+          "tolerance": { "type": "number" },
+          "requiresMetricConfig": { "type": "array", "items": { "type": "string" } },
+          "aggregationNote": { "type": "string" }
+        },
+        "additionalProperties": false
+      }
+    }
+  },
+  "additionalProperties": false
+}

@@ -1,0 +1,3 @@
+run_id,example_id,query_text,predicted_cluster_id,reference_cluster_id,latency_ms,cost,cost_currency
+sample-aurora-r1,q-001,reset my password for the billing portal,c-auth,r-auth,12,,
+sample-aurora-r1,q-002,invoice shows duplicate charge,c-billing,r-billing,14,,

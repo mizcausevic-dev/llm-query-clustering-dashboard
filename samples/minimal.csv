@@ -1,0 +1,3 @@
+model,dataset,metric,score,latency,cost,run_timestamp
+fictional-aurora-clusterer,support-queries,ARI,0.62,1400,0.55,2026-09-01T12:00:00Z
+fictional-borealis-clusterer,support-queries,ARI,0.55,900,0.28,2026-09-01T13:00:00Z
