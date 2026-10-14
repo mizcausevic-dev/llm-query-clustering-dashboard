@@ -30,7 +30,7 @@ See `src/lib/limits.ts` and `SPEC.md`.
 3. Optional examples CSV (`samples/examples.csv`) linked to existing or concurrently imported runs.
 4. Minimal legacy CSV (`samples/minimal.csv` with model,dataset,metric,score,latency,cost,run_timestamp): requires column mapping, latency-unit (ms) and cost currency/basis/provenance confirmation, synthetic classification, and explains missing comparison metadata. Default one run per row; optional explicit grouping with preview; contradictory groups rejected.
 
-Import preview shows valid/invalid (row, field, reason), missing fields, missing compatibility metadata, duplicate/conflicting IDs, synthetic status, conversions. Reject file or import valid-only after confirmation. Existing-ID policy: reject conflicts without overwriting; offer incoming-ID remapping (`old=new` per line, example refs remapped); never assume same names mean same runs. Provenance records filename, timestamp, SHA-256 (integrity only, not authenticity), mappings/conversions, accepted/rejected counts.
+Import preview shows valid/invalid (row, field, reason), missing fields, missing compatibility metadata, duplicate/conflicting IDs, synthetic status, conversions. Reject file or import valid-only after confirmation. Existing-ID policy: reject conflicts without overwriting; offer incoming-ID remapping (`old=new` per line, example refs remapped); never assume same names mean same runs. Provenance records filename, timestamp, full-file SHA-256 (integrity only, not authenticity), imported byte count, mappings/conversions, accepted/rejected counts. Parsing tries a web worker first and falls back to the same local validators if the worker is unavailable.
 
 ## Compatibility and aggregation
 

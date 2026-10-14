@@ -1,5 +1,5 @@
 import type { RunMetricRecord } from "./types.ts";
-import { candidateKey } from "./compatibility.ts";
+import { aggregationKey } from "./compareLogic.ts";
 
 export interface CandidateSummary {
   candidateKey: string;
@@ -45,6 +45,14 @@ export function sampleStd(xs: number[]): number | null {
   return Math.sqrt(ss / (xs.length - 1));
 }
 
+export function distinctRuns(runs: RunMetricRecord[]): RunMetricRecord[] {
+  const seen = new Map<string, RunMetricRecord>();
+  for (const r of runs) {
+    if (!seen.has(r.run_id)) seen.set(r.run_id, r);
+  }
+  return [...seen.values()].sort((a, b) => (a.run_id < b.run_id ? -1 : 1));
+}
+
 export function summarizeCohort(
   runs: RunMetricRecord[],
   labelFor: (r: RunMetricRecord) => string = (r) => r.model,
@@ -52,7 +60,7 @@ export function summarizeCohort(
   const groups = new Map<string, RunMetricRecord[]>();
   const order: string[] = [];
   for (const r of runs) {
-    const k = candidateKey(r);
+    const k = aggregationKey(r);
     if (!groups.has(k)) {
       groups.set(k, []);
       order.push(k);
@@ -62,7 +70,8 @@ export function summarizeCohort(
   order.sort();
   return order.map((k) => {
     const rows = (groups.get(k) ?? []).slice().sort((a, b) => (a.run_id < b.run_id ? -1 : a.run_id > b.run_id ? 1 : 0));
-    const scores = rows.map((r) => r.score).filter((s): s is number => typeof s === "number" && Number.isFinite(s));
+    const perRun = distinctRuns(rows);
+    const scores = perRun.map((r) => r.score).filter((s): s is number => typeof s === "number" && Number.isFinite(s));
     const first = rows[0];
     return {
       candidateKey: k,
@@ -70,9 +79,9 @@ export function summarizeCohort(
       model: first.model,
       model_version: first.model_version,
       model_config_id: first.model_config_id,
-      totalRuns: new Set(rows.map((r) => r.run_id)).size,
+      totalRuns: perRun.length,
       validScores: scores.length,
-      missingScores: rows.length - scores.length,
+      missingScores: perRun.length - scores.length,
       mean: meanOf(scores),
       median: medianOf(scores),
       min: scores.length ? Math.min(...scores) : null,
@@ -85,14 +94,6 @@ export function summarizeCohort(
       unknownIdentity: first.model_version === null || first.model_config_id === null,
     };
   });
-}
-
-export function distinctRuns(runs: RunMetricRecord[]): RunMetricRecord[] {
-  const seen = new Map<string, RunMetricRecord>();
-  for (const r of runs) {
-    if (!seen.has(r.run_id)) seen.set(r.run_id, r);
-  }
-  return [...seen.values()].sort((a, b) => (a.run_id < b.run_id ? -1 : 1));
 }
 
 export function performanceSummary(

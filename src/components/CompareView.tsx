@@ -9,6 +9,7 @@ import { summarizeCohort, distinctRuns } from "../lib/aggregation.ts";
 import { checkMetricBounds } from "../lib/metricRegistry.ts";
 import { paretoFrontier } from "../lib/pareto.ts";
 import { formatNum, timezoneLabel } from "../appState.ts";
+import { controlledCohorts, groupByCohort, plotCohortForMetric, rowCompatibilityLabel } from "../lib/compareLogic.ts";
 
 function useDebounced<T>(value: T, ms = 300): T {
   const [deb, setDeb] = useState(value);
@@ -48,24 +49,8 @@ export function CompareView(props: {
   const candidates = useMemo(() => [...new Set(runs.map((r) => candidateLabel(r)))].sort(), [runs]);
   const metrics = useMemo(() => [...new Set(runs.map((r) => r.metric))].sort(), [runs]);
 
-  const cohortSizes = useMemo(() => {
-    const m = new Map<string, number>();
-    const byKey = new Map<string, Set<string>>();
-    for (const r of runs) {
-      const { key } = cohortKeyFor(r, defs);
-      if (!byKey.has(key)) byKey.set(key, new Set());
-      byKey.get(key)?.add(r.run_id);
-    }
-    for (const [k, s] of byKey) m.set(k, s.size);
-    return m;
-  }, [runs, defs]);
-
   function compatOf(r: RunMetricRecord): { status: string; reason: string } {
-    const { key, missing } = cohortKeyFor(r, defs);
-    if (missing.length > 0) return { status: "unverified", reason: `missing: ${missing.join(", ")}` };
-    const n = cohortSizes.get(key) ?? 0;
-    if (n >= 2) return { status: "comparable", reason: "declared metadata matches a cohort with 2+ distinct runs" };
-    return { status: "incompatible", reason: "complete metadata but no matching cohort (singleton); excluded from controlled comparison" };
+    return rowCompatibilityLabel(r, runs, defs);
   }
 
   const filtered = useMemo(() => {
@@ -75,10 +60,16 @@ export function CompareView(props: {
       if (f.metrics.length && !f.metrics.includes(r.metric)) return false;
       if (f.synthetic === "real" && r.is_synthetic) return false;
       if (f.synthetic === "synthetic" && !r.is_synthetic) return false;
-      if (f.from && r.run_timestamp < f.from) return false;
-      if (f.to && r.run_timestamp > f.to) return false;
+      if (f.from) {
+        const fromIso = new Date(f.from).toISOString();
+        if (r.run_timestamp < fromIso) return false;
+      }
+      if (f.to) {
+        const toIso = new Date(f.to).toISOString();
+        if (r.run_timestamp > toIso) return false;
+      }
       if (searchDeb && !`${r.run_id} ${r.model} ${r.metric}`.toLowerCase().includes(searchDeb.toLowerCase())) return false;
-      const c = compatOf(r);
+      const c = rowCompatibilityLabel(r, runs, defs);
       if (f.compat !== "all" && c.status !== f.compat) return false;
       if (cohortFocus !== "all") {
         const { key } = cohortKeyFor(r, defs);
@@ -86,41 +77,33 @@ export function CompareView(props: {
       }
       return true;
     }).sort((a, b) => (a.run_id === b.run_id ? (a.metric < b.metric ? -1 : 1) : a.run_id < b.run_id ? -1 : 1));
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [runs, f, searchDeb, cohortFocus, defs, cohortSizes]);
+  }, [runs, f, searchDeb, cohortFocus, defs]);
 
-  const cohorts = useMemo(() => {
-    const m = new Map<string, { label: string; runs: RunMetricRecord[] }>();
-    for (const r of filtered) {
-      const { key } = cohortKeyFor(r, defs);
-      const label = `${r.dataset}@${r.dataset_version ?? "?"} | ${r.evaluation_set_id ?? "?"} | ${r.metric} n=${r.sample_size ?? "?"} | ${r.is_synthetic ? "synthetic" : "real"}`;
-      const e = m.get(key);
-      if (!e) m.set(key, { label, runs: [r] });
-      else e.runs.push(r);
-    }
-    return [...m.entries()].map(([key, v]) => ({ key, ...v })).sort((a, b) => (a.label < b.label ? -1 : 1));
-  }, [filtered, defs]);
+  const cohorts = useMemo(() => groupByCohort(filtered, defs), [filtered, defs]);
 
   const comparisonGroups = useMemo(() => {
-    return cohorts
-      .filter((c) => (cohortSizes.get(c.key) ?? 0) >= 2 || c.runs.length >= 2)
-      .map((c) => {
-        const first = c.runs[0];
-        const summaries = summarizeCohort(c.runs, candidateLabel);
-        return { ...c, metric: first.metric, summaries };
-      });
-  }, [cohorts, cohortSizes]);
+    return controlledCohorts(filtered, defs).map((c) => ({
+      ...c,
+      metric: c.runs[0].metric,
+      summaries: summarizeCohort(c.runs, candidateLabel),
+    }));
+  }, [filtered, defs]);
 
   const effQuality = qualityMetric || metrics[0] || "";
   const def = findMetricDefinition(defs, effQuality);
   const direction = def?.direction ?? "higher";
 
+  const plotCohort = useMemo(
+    () => plotCohortForMetric(filtered, defs, effQuality, cohortFocus),
+    [filtered, defs, effQuality, cohortFocus],
+  );
+
   const costQualityPoints = useMemo(() => {
     const pts: Array<{ x: number; y: number; label: string; run: string }> = [];
     let excluded = 0;
     const reasons = new Map<string, number>();
-    for (const r of filtered) {
-      if (r.metric !== effQuality) continue;
+    const source = plotCohort?.runs ?? [];
+    for (const r of source) {
       if (typeof r.score !== "number" || typeof r.cost !== "number") {
         excluded += 1;
         const k = r.score === null ? "missing quality" : "missing cost";
@@ -130,14 +113,14 @@ export function CompareView(props: {
       pts.push({ x: r.cost, y: r.score, label: candidateLabel(r), run: r.run_id });
     }
     pts.sort((a, b) => (a.run === b.run ? 0 : a.run < b.run ? -1 : 1));
-    return { pts, excluded, reasons, currency: filtered.find((r) => r.cost_currency)?.cost_currency ?? "?" };
-  }, [filtered, effQuality]);
+    return { pts, excluded, reasons, currency: source.find((r) => r.cost_currency)?.cost_currency ?? "?", cohort: plotCohort?.label ?? "no controlled cohort for this metric" };
+  }, [plotCohort]);
 
   const latencyQualityPoints = useMemo(() => {
     const pts: Array<{ x: number; y: number; label: string; run: string }> = [];
     let excluded = 0;
-    for (const r of filtered) {
-      if (r.metric !== effQuality) continue;
+    const source = plotCohort?.runs ?? [];
+    for (const r of source) {
       if (typeof r.score !== "number" || typeof r.latency !== "number") {
         excluded += 1;
         continue;
@@ -145,8 +128,8 @@ export function CompareView(props: {
       pts.push({ x: r.latency, y: r.score, label: candidateLabel(r), run: r.run_id });
     }
     pts.sort((a, b) => (a.run === b.run ? 0 : a.run < b.run ? -1 : 1));
-    return { pts, excluded };
-  }, [filtered, effQuality]);
+    return { pts, excluded, cohort: plotCohort?.label ?? "no controlled cohort for this metric" };
+  }, [plotCohort]);
 
   const outOfRange = useMemo(() => {
     return filtered.filter((r) => {
@@ -158,17 +141,19 @@ export function CompareView(props: {
 
   const pareto = useMemo(() => {
     if (!paretoOn || !effQuality) return null;
-    const base = filtered.filter((r) => r.metric === effQuality && typeof r.score === "number" && typeof r.cost === "number");
-    if (base.length === 0) return { points: [], disabled: "no rows with both quality and cost" };
+    if (!plotCohort) return { points: [], disabled: "Pareto needs one controlled quality cohort (complete metadata, 2+ distinct runs)" };
+    const base = plotCohort.runs.filter((r) => typeof r.score === "number" && typeof r.cost === "number");
+    if (base.length === 0) return { points: [], disabled: "no rows with both quality and cost in the controlled cohort" };
     const first = base[0];
     for (const r of base.slice(1)) {
       const c = performanceCompatibility(first, r, "cost");
-      if (c.status !== "comparable") return { points: [], disabled: `cost cohort not poolable: ${c.reasons.join("; ")}` };
-      if (r.is_synthetic !== first.is_synthetic) return { points: [], disabled: "synthetic and real must stay separate" };
+      if (c.status !== "comparable" || c.reasons.some((x) => x.startsWith("side-by-side"))) {
+        return { points: [], disabled: `cost cohort not poolable: ${c.reasons.join("; ")}` };
+      }
     }
     const pts = paretoFrontier(base.map((r) => ({ candidate: candidateLabel(r), quality: r.score as number, cost: r.cost as number, runId: r.run_id })), direction);
     return { points: pts, disabled: null as string | null };
-  }, [paretoOn, filtered, effQuality, direction]);
+  }, [paretoOn, plotCohort, effQuality, direction]);
 
   const PAGE_SIZE = 50;
   const pages = Math.max(1, Math.ceil(filtered.length / PAGE_SIZE));
@@ -187,8 +172,8 @@ export function CompareView(props: {
         <fieldset><legend>Datasets</legend>{datasets.map((d) => <label key={d}><input type="checkbox" checked={f.datasets.includes(d)} onChange={(e) => setF({ ...f, datasets: e.target.checked ? [...f.datasets, d] : f.datasets.filter((x) => x !== d) })} /> {d}</label>)}</fieldset>
         <fieldset><legend>Candidates (model + version + config)</legend>{candidates.map((c) => <label key={c}><input type="checkbox" checked={f.candidates.includes(c)} onChange={(e) => setF({ ...f, candidates: e.target.checked ? [...f.candidates, c] : f.candidates.filter((x) => x !== c) })} /> {c}</label>)}</fieldset>
         <fieldset><legend>Metrics</legend>{metrics.map((m) => <label key={m}><input type="checkbox" checked={f.metrics.includes(m)} onChange={(e) => setF({ ...f, metrics: e.target.checked ? [...f.metrics, m] : f.metrics.filter((x) => x !== m) })} /> {m}</label>)}</fieldset>
-        <label>From (ISO) <input type="datetime-local" value={f.from} onChange={(e) => setF({ ...f, from: e.target.value ? new Date(e.target.value).toISOString() : "" })} /></label>
-        <label>To (ISO) <input type="datetime-local" value={f.to} onChange={(e) => setF({ ...f, to: e.target.value ? new Date(e.target.value).toISOString() : "" })} /></label>
+        <label>From (local, compared as ISO) <input type="datetime-local" value={f.from} onChange={(e) => setF({ ...f, from: e.target.value })} /></label>
+        <label>To (local, compared as ISO) <input type="datetime-local" value={f.to} onChange={(e) => setF({ ...f, to: e.target.value })} /></label>
         <label>Synthetic
           <select value={f.synthetic} onChange={(e) => setF({ ...f, synthetic: e.target.value as FilterState["synthetic"] })}>
             <option value="all">all (labeled)</option>
@@ -274,7 +259,7 @@ export function CompareView(props: {
       </label>
       <div className="charts">
         <figure>
-          <figcaption>Cost vs quality · metric {effQuality} ({direction} is better) · points are runs · currency cohort mixed? see exclusions · n={costQualityPoints.pts.length} shown, {costQualityPoints.excluded} excluded (missing quality/cost only for this plot)</figcaption>
+          <figcaption>Cost vs quality · metric {effQuality} ({direction} is better) · cohort {costQualityPoints.cohort} · points are runs · n={costQualityPoints.pts.length} shown, {costQualityPoints.excluded} excluded (missing quality/cost only for this plot)</figcaption>
           <ResponsiveContainer width="100%" height={280}>
             <ScatterChart margin={{ top: 10, right: 20, bottom: 20, left: 20 }}>
               <CartesianGrid />
@@ -288,7 +273,7 @@ export function CompareView(props: {
           <table aria-label="Cost quality companion data"><thead><tr><th>run</th><th>candidate</th><th>cost</th><th>score</th></tr></thead><tbody>{costQualityPoints.pts.slice(0, 30).map((p) => <tr key={p.run}><td>{p.run}</td><td>{p.label}</td><td>{p.x}</td><td>{p.y}</td></tr>)}</tbody></table>
         </figure>
         <figure>
-          <figcaption>Latency vs quality · metric {effQuality} · points are runs · latency ms run_total unless labeled · n={latencyQualityPoints.pts.length} shown, {latencyQualityPoints.excluded} excluded</figcaption>
+          <figcaption>Latency vs quality · metric {effQuality} · cohort {latencyQualityPoints.cohort} · points are runs · latency ms as declared · n={latencyQualityPoints.pts.length} shown, {latencyQualityPoints.excluded} excluded</figcaption>
           <ResponsiveContainer width="100%" height={280}>
             <ScatterChart margin={{ top: 10, right: 20, bottom: 20, left: 20 }}>
               <CartesianGrid />
@@ -303,7 +288,7 @@ export function CompareView(props: {
         <figure>
           <figcaption>Candidate mean scores (bars show mean of distinct runs; see table for median/min/max/SD and denominators)</figcaption>
           <ResponsiveContainer width="100%" height={260}>
-            <BarChart data={(comparisonGroups[0]?.summaries ?? []).map((s) => ({ name: s.label.slice(0, 18), mean: s.mean ?? 0, valid: s.validScores }))} margin={{ top: 10, right: 20, bottom: 40, left: 20 }}>
+            <BarChart data={(comparisonGroups.find((g) => g.metric === effQuality)?.summaries ?? []).filter((s) => s.mean !== null).map((s) => ({ name: s.label.slice(0, 18), mean: s.mean, valid: s.validScores }))} margin={{ top: 10, right: 20, bottom: 40, left: 20 }}>
               <CartesianGrid />
               <XAxis dataKey="name" angle={-20} textAnchor="end" interval={0} height={60} />
               <YAxis />

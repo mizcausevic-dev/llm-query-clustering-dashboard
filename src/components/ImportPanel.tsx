@@ -5,6 +5,7 @@ import type { ColumnMapping } from "../lib/csv.ts";
 import { parseExamplesCsvLocal, parseRunsCsvLocal, parseWorkspaceJsonLocal } from "../lib/importLocal.ts";
 import type { LocalParseResult } from "../lib/importLocal.ts";
 import { sha256Hex } from "../lib/hash.ts";
+import { runImportInWorker, terminateWorker } from "../lib/workerClient.ts";
 import type { ExampleRecord, ProvenanceEntry, RunMetricRecord, ValidationIssue } from "../lib/types.ts";
 import { detectConflicts } from "../appState.ts";
 
@@ -52,7 +53,9 @@ export function ImportPanel(props: {
   const [confirmValidOnly, setConfirmValidOnly] = useState(false);
   const [confirmExistingRefs, setConfirmExistingRefs] = useState(false);
   const [isWorking, setIsWorking] = useState(false);
+  const [usedWorker, setUsedWorker] = useState(false);
   const fileRef = useRef<HTMLInputElement>(null);
+  const abortRef = useRef<AbortController | null>(null);
 
   const minimalMode = useMemo(() => {
     if (!pending || pending.kind !== "runs-csv") return false;
@@ -71,29 +74,55 @@ export function ImportPanel(props: {
       setError(`Cumulative bytes would exceed ${formatBytes(LIMITS.MAX_TOTAL_BYTES)}. Current ${formatBytes(props.totalBytes)}, incoming ${formatBytes(f.size)}.`);
       return;
     }
+    abortRef.current?.abort();
+    const ac = new AbortController();
+    abortRef.current = ac;
     setIsWorking(true);
+    setUsedWorker(false);
     setProgress({ done: 0, total: 100 });
     try {
       const text = await f.text();
-      const hash = await sha256Hex(text.slice(0, 5_000_000));
-      if (kind === "workspace-json") {
-        const result = parseWorkspaceJsonLocal(text);
-        setPending({ filename: f.name, bytes: f.size, sha256: hash, kind, text, headers: [], result });
-      } else if (kind === "runs-csv") {
+      if (ac.signal.aborted) throw new Error("cancelled");
+      const hash = await sha256Hex(text);
+      const defaults = { latency_unit: "ms", latency_basis: "unknown", cost_basis: "unknown", cost_provenance: "unknown", is_synthetic: false } as Record<string, string | boolean | null>;
+      let headers: string[] = [];
+      let suggested: ColumnMapping | undefined;
+      if (kind !== "workspace-json") {
         const table = splitCsv(text);
-        const suggested = suggestMapping(table.headers);
-        setMapping(suggested);
-        const objs = tableToObjects(table);
-        const mapped = applyMapping(objs, suggested);
-        void mapped;
-        const defaults = { latency_unit: "ms", latency_basis: "unknown", cost_basis: "unknown", cost_provenance: "unknown", is_synthetic: false };
-        const result = parseRunsCsvLocal(text, suggested, defaults as Record<string, string | boolean | null>, (d, t) => setProgress({ done: d, total: t }));
-        setPending({ filename: f.name, bytes: f.size, sha256: hash, kind, text, headers: table.headers, result, mapping: suggested });
-      } else {
-        const result = parseExamplesCsvLocal(text);
-        const table = splitCsv(text);
-        setPending({ filename: f.name, bytes: f.size, sha256: hash, kind, text, headers: table.headers, result });
+        headers = table.headers;
+        if (kind === "runs-csv") {
+          suggested = suggestMapping(table.headers);
+          setMapping(suggested);
+        }
       }
+      let result: LocalParseResult;
+      try {
+        const job = await runImportInWorker(
+          { kind, text, mapping: suggested, defaults },
+          { filename: f.name, bytes: f.size, sha256: hash },
+          (d, t) => setProgress({ done: d, total: t }),
+          ac.signal,
+        );
+        result = {
+          runs: job.runs ?? [],
+          examples: job.examples ?? [],
+          metricDefinitions: job.metricDefinitions ?? [],
+          runIssues: job.runIssues,
+          invalidRuns: job.invalidRuns,
+          invalidExamples: job.invalidExamples,
+          missingCompatibility: job.missingCompatibility,
+          schemaVersion: job.schemaVersion,
+        };
+        setUsedWorker(true);
+      } catch (workerErr) {
+        if (ac.signal.aborted) throw workerErr;
+        const onProg = (d: number, t: number) => setProgress({ done: d, total: t });
+        if (kind === "workspace-json") result = parseWorkspaceJsonLocal(text);
+        else if (kind === "runs-csv") result = parseRunsCsvLocal(text, suggested, defaults, onProg);
+        else result = parseExamplesCsvLocal(text);
+        setUsedWorker(false);
+      }
+      setPending({ filename: f.name, bytes: f.size, sha256: hash, kind, text, headers, result, mapping: suggested });
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
     } finally {
@@ -244,7 +273,8 @@ export function ImportPanel(props: {
       rejectedRuns: pending.result.invalidRuns.length,
       acceptedExamples: examples.length,
       rejectedExamples: pending.result.invalidExamples.length,
-      note: "SHA-256 is a file-integrity fingerprint, not proof of authenticity.",
+      importedBytes: pending.bytes,
+      note: "SHA-256 is a full-file integrity fingerprint, not proof of authenticity.",
     };
     const err = props.onCommit(runs, examples, pending.result.metricDefinitions, prov, remap);
     if (err) {
@@ -271,7 +301,12 @@ export function ImportPanel(props: {
         <label>Long-form runs CSV <input type="file" accept=".csv,text/csv" onChange={(e) => { const f = e.target.files?.[0]; if (f) void handleFile(f, "runs-csv"); e.target.value = ""; }} /></label>
         <label>Examples CSV <input type="file" accept=".csv,text/csv" onChange={(e) => { const f = e.target.files?.[0]; if (f) void handleFile(f, "examples-csv"); e.target.value = ""; }} /></label>
       </div>
-      {isWorking && <p role="status">Parsing and validating… {progress ? `${progress.done}/${progress.total}` : ""} (bounded worker; you can reload to cancel a stuck parse)</p>}
+      {isWorking && (
+        <p role="status">
+          Parsing and validating… {progress ? `${progress.done}/${progress.total}` : ""} ({usedWorker ? "worker" : "trying worker, then local fallback"})
+          <button type="button" onClick={() => { abortRef.current?.abort(); terminateWorker(); }}>Cancel</button>
+        </p>
+      )}
       {error && <p role="alert" className="error">{error}</p>}
       {!pending && (
         <details>

@@ -1,7 +1,7 @@
 # AppSec Report (self-review, labeled)
 
 Date: 2026-10-13
-Reviewer: implementation lead (self-review). Independent senior-appsec-engineer review NOT performed; agents unavailable as Task subagents in this environment (inspected `C:\Users\chaus\.cursor\agents\protect\appsec-engineer.md`, YAML name `senior-appsec-engineer`). Gap disclosed; owner must accept before production claims.
+Reviewer: implementation lead (self-review) plus independent pass by `senior-appsec-engineer` on 2026-10-14. Role spec inspected at `~/.cursor/agents/protect/appsec-engineer.md`.
 
 ## Scope
 

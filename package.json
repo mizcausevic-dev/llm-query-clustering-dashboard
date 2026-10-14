@@ -10,7 +10,7 @@
     "preview": "vite preview",
     "test": "vitest run",
     "test:e2e": "playwright test",
-    "sbom": "npx --yes @cyclonedx/cyclonedx-npm --output-file sbom.json --output-format JSON"
+    "sbom": "npx --yes @cyclonedx/cyclonedx-npm@4.2.1 --output-file sbom.json --output-format JSON"
   },
   "dependencies": {
     "react": "^19.2.8",

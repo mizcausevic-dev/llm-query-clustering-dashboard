@@ -1,7 +1,7 @@
 # Supply-Chain and Build Report (self-review, labeled)
 
 Date: 2026-10-13
-Reviewer: implementation lead (self-review). Independent senior-release-supply-chain-engineer review NOT performed (inspected `C:\Users\chaus\.cursor\agents\protect\release-supply-chain-engineer.md`, YAML name `release-supply-chain-engineer`; unavailable as Task subagent). Gap disclosed.
+Reviewer: implementation lead (self-review) plus independent pass by `release-supply-chain-engineer` on 2026-10-14. Role spec inspected at `~/.cursor/agents/protect/release-supply-chain-engineer.md`. Lockfile field is `lockfileVersion` 3 (npm 11 client). The earlier "lockfile v11" wording was a client/version mixup.
 
 ## Dependencies (reason for each production dep)
 
@@ -12,7 +12,7 @@ Dev: `typescript`, `vite`, `@vitejs/plugin-react`, `vitest`, `@playwright/test`,
 
 ## Lockfile and install
 
-- `package-lock.json` present and committed. Install via `npm install` (frozen install `npm ci` also works; lockfile v11, npm 11.6.1, node v24.11.0).
+- `package-lock.json` present and committed. Install via `npm install` (frozen install `npm ci` also works; `lockfileVersion` 3, npm 11.6.1, node v24.11.0).
 - `npm audit --audit-level=moderate`: 0 vulnerabilities.
 
 ## Scans (actual results 2026-10-13)

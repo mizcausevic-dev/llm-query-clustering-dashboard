@@ -105,7 +105,13 @@ self.onmessage = (ev: MessageEvent<WorkerRequest>) => {
             const first = firstByRun.get(record.run_id);
             let conflict: string | null = null;
             if (first) {
-              const fields: Array<keyof RunMetricRecord> = ["model", "dataset", "dataset_version", "evaluation_set_id", "evaluation_config_id", "run_timestamp", "seed", "is_synthetic", "latency", "cost"];
+              const fields: Array<keyof RunMetricRecord> = [
+                "model", "model_version", "model_config_id", "dataset", "dataset_version",
+                "evaluation_set_id", "evaluation_config_id", "run_timestamp", "seed",
+                "is_synthetic", "latency", "latency_unit", "latency_basis", "cost",
+                "cost_currency", "cost_basis", "cost_provenance", "work_item_count",
+                "work_item_unit", "performance_context_id",
+              ];
               for (const fld of fields) {
                 if (!Object.is(first[fld], record[fld])) { conflict = fld; break; }
               }

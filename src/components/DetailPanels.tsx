@@ -74,7 +74,8 @@ export function ExampleView(props: { runs: RunMetricRecord[]; examples: ExampleR
             {[...byCluster.entries()].sort().map(([cluster, items]) => (
               <div key={cluster}>
                 <h4>predicted cluster {cluster} ({items.length})</h4>
-                <ul>{items.sort((a, b) => (a.example_id < b.example_id ? -1 : 1)).map((e) => <li key={e.example_id}><strong>{e.example_id}</strong>: {e.query_text} (ref {e.reference_cluster_id ?? "—"})</li>)}</ul>
+                <ul>{items.sort((a, b) => (a.example_id < b.example_id ? -1 : 1)).slice(0, 200).map((e) => <li key={e.example_id}><strong>{e.example_id}</strong>: {e.query_text} (ref {e.reference_cluster_id ?? "—"})</li>)}</ul>
+            {items.length > 200 && <p className="muted">Showing first 200 of {items.length} examples in this cluster. Export canonical JSON for the full supplied set.</p>}
               </div>
             ))}
           </details>

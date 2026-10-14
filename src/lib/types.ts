@@ -82,6 +82,7 @@ export interface ProvenanceEntry {
   rejectedRuns: number;
   acceptedExamples: number;
   rejectedExamples: number;
+  importedBytes: number;
   note: string;
 }
 

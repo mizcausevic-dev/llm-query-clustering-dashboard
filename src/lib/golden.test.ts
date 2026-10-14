@@ -4,6 +4,7 @@ import { parseRunsCsvLocal, parseExamplesCsvLocal, parseWorkspaceJsonLocal } fro
 import { validateRunRecord, parseStrictNumber, isValidTimestampWithTimezone } from "./validation.ts";
 import { qualityCompatibility, performanceCompatibility, derivePerWorkItem, candidateKey } from "./compatibility.ts";
 import { summarizeCohort, meanOf, medianOf, sampleStd, distinctRuns, performanceSummary } from "./aggregation.ts";
+import { controlledCohorts, plotCohortForMetric, rowCompatibilityLabel } from "./compareLogic.ts";
 import { checkMetricBounds, VERIFIED_METRICS } from "./metricRegistry.ts";
 import { rawMetricsCsv, summaryCsv, escapeCsvCell, toCanonicalJson } from "./exports.ts";
 import { paretoFrontier } from "./pareto.ts";
@@ -199,10 +200,14 @@ describe("aggregation goldens", () => {
     expect(perf.nValid).toBe(2);
   });
   it("synthetic runs cannot alter real summaries when filtered", () => {
-    const real = [baseRun({ run_id: "a", score: 0.5, is_synthetic: false })];
+    const real = [baseRun({ run_id: "a", score: 0.5, is_synthetic: false }), baseRun({ run_id: "b", score: 0.6, is_synthetic: false })];
     const synth = [baseRun({ run_id: "s", score: 0.99, is_synthetic: true })];
-    expect(summarizeCohort(real)[0].mean).toBe(0.5);
-    expect(summarizeCohort([...real, ...synth]).length).toBe(1);
+    const defs = VERIFIED_METRICS.map((m) => ({ ...m }));
+    const groups = controlledCohorts([...real, ...synth], defs);
+    expect(groups).toHaveLength(1);
+    expect(groups[0].runs.every((r) => !r.is_synthetic)).toBe(true);
+    expect(summarizeCohort(groups[0].runs)[0].mean).toBeCloseTo(0.55, 12);
+    expect(summarizeCohort(real)[0].mean).toBeCloseTo(0.55, 12);
   });
 });
 
@@ -262,5 +267,46 @@ describe("workspace JSON validation", () => {
     const res = parseRunsCsvLocal(csv, { model: "model", dataset: "dataset", metric: "metric", score: "score", latency: "latency", cost: "cost", run_timestamp: "run_timestamp" }, { latency_unit: "ms", latency_basis: "unknown", cost_basis: "run_total", cost_provenance: "reported", is_synthetic: false, cost_currency: "USD" });
     expect(res.runs.length).toBe(1);
     expect(res.missingCompatibility.length).toBeGreaterThan(0);
+  });
+});
+
+describe("comparison eligibility", () => {
+  const defs = VERIFIED_METRICS.map((m) => ({ ...m }));
+  it("does not silently pool unknown candidate identities", () => {
+    const a = baseRun({ run_id: "a", model_version: null, model_config_id: null, score: 0.4 });
+    const b = baseRun({ run_id: "b", model_version: null, model_config_id: null, score: 0.8 });
+    const s = summarizeCohort([a, b]);
+    expect(s.length).toBe(2);
+    expect(s.every((x) => x.unknownIdentity)).toBe(true);
+  });
+  it("unverified rows do not form a controlled cohort even when nulls match", () => {
+    const a = baseRun({ run_id: "a", evaluation_set_id: null, evaluation_config_id: null, dataset_version: null });
+    const b = baseRun({ run_id: "b", evaluation_set_id: null, evaluation_config_id: null, dataset_version: null });
+    expect(controlledCohorts([a, b], defs)).toHaveLength(0);
+    expect(rowCompatibilityLabel(a, [a, b], defs).status).toBe("unverified");
+  });
+  it("complete singleton is comparable, not incompatible", () => {
+    const a = baseRun({ run_id: "solo", metric: "AMI" });
+    expect(rowCompatibilityLabel(a, [a], defs).status).toBe("comparable");
+    expect(controlledCohorts([a], defs)).toHaveLength(0);
+  });
+  it("complete row with a differing dataset version is incompatible", () => {
+    const a = baseRun({ run_id: "a", dataset_version: "2026.01" });
+    const b = baseRun({ run_id: "b", dataset_version: "2026.02" });
+    expect(rowCompatibilityLabel(b, [a, b], defs).status).toBe("incompatible");
+    expect(controlledCohorts([a, b], defs)).toHaveLength(0);
+  });
+  it("plots stay inside one controlled metric cohort", () => {
+    const support = [
+      baseRun({ run_id: "a", dataset: "support-queries", score: 0.6 }),
+      baseRun({ run_id: "b", dataset: "support-queries", score: 0.5 }),
+    ];
+    const billing = [
+      baseRun({ run_id: "c", dataset: "billing-queries", score: 0.9 }),
+      baseRun({ run_id: "d", dataset: "billing-queries", score: 0.8 }),
+    ];
+    const plot = plotCohortForMetric([...support, ...billing], defs, "ARI", "all");
+    expect(plot).not.toBeNull();
+    expect(new Set(plot?.runs.map((r) => r.dataset)).size).toBe(1);
   });
 });

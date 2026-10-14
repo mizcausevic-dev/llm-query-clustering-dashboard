@@ -31,4 +31,25 @@ Date: 2026-10-13 (UTC). Environment: Windows 10.0.26200, Node v24.11.0, npm 11.6
 
 - Pre-public gate (preflight-security): Gate 3 history `gitleaks detect --source . --log-opts="--all" --redact` = no leaks (1 commit scanned); Gate 4 CI = N/A (no workflows, Dockerfiles, or deploy scripts in repo); Gate 5 topology = clean (no hostnames, IPs, usernames, env references in `src`; no `.env` files). No STOP conditions triggered.
 - Created private repo `mizcausevic-dev/llm-query-clustering-dashboard`, pushed `main` (commit `79aae1c` + branch rename). About + 8 topics set and verified via `gh repo view`.
-- Secret scanning + push protection: NOT enabled, GitHub returns HTTP 422 (unavailable on private personal repos without GHAS). Compensating control: local gitleaks pre-commit hook active (it demonstrably blocked once on a pattern-name false positive, since reworded). Flipping the repo to public would enable free secret scanning and push protection.
+- Secret scanning + push protection: unavailable on the private personal repo (HTTP 422/404). The local gitleaks *pre-commit hook is not installed* (`.git/hooks` has only Git samples). Compensating control that *did* run: `gitleaks detect --log-opts="--all"` on history, plus the repo pre-commit secret scanner that blocked a report-pattern false positive during the first commit. Public visibility is the path to GitHub secret scanning and push protection.
+
+## Sanity pass (2026-10-14)
+
+Independent reviews: `senior-appsec-engineer` and `release-supply-chain-engineer` both proceed-to-public, no STOP.
+
+Fixes applied before the public flip (logic, not just docs):
+
+- Cumulative byte budget now uses `importedBytes` / `f.size`. The old check added record counts to a byte field and compared against 50 MiB + 1e9.
+- Import tries the worker first; Vite now emits `importWorker-*.js`. Local validators remain the fallback.
+- Full-file SHA-256 (not a 5 MiB prefix).
+- Unknown candidate identity is not pooled.
+- Unverified rows (matching nulls) cannot form a controlled cohort.
+- Complete singletons are comparable, not mislabeled incompatible.
+- Scatter / Pareto / summary CSV stay inside one controlled quality cohort.
+- Bar chart drops null means instead of drawing zero.
+- Synthetic/real mix requires confirmation.
+- Example drill-down caps at 200 items per cluster.
+- `.gitignore` now covers `.env` / `.env.*`.
+- Stale "gitleaks hook active" and "lockfile v11" claims corrected.
+
+`npm test`: 35/35 PASS. `npm run lint`: 0 errors. `npm run build`: PASS (worker chunk 13.68 kB + main ~680 kB).

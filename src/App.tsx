@@ -10,7 +10,8 @@ import { VERIFIED_METRICS } from "./lib/metricRegistry.ts";
 import { toCanonicalJson, rawMetricsCsv, summaryCsv } from "./lib/exports.ts";
 import type { SummaryRow } from "./lib/exports.ts";
 import { summarizeCohort } from "./lib/aggregation.ts";
-import { cohortKeyFor, candidateLabel } from "./lib/compatibility.ts";
+import { candidateLabel } from "./lib/compatibility.ts";
+import { controlledCohorts } from "./lib/compareLogic.ts";
 import type { ProvenanceEntry } from "./lib/types.ts";
 import "./index.css";
 
@@ -42,7 +43,9 @@ export default function App() {
   ): string | null {
     if (ws.runs.length + runs.length > LIMITS.MAX_METRIC_RECORDS) return `Metric record limit exceeded (${LIMITS.MAX_METRIC_RECORDS}).`;
     if (ws.examples.length + examples.length > LIMITS.MAX_EXAMPLE_RECORDS) return `Example record limit exceeded (${LIMITS.MAX_EXAMPLE_RECORDS}).`;
-    if (ws.totalImportedBytes + prov.acceptedRuns + prov.acceptedExamples > LIMITS.MAX_TOTAL_BYTES + 1_000_000_000) return "Cumulative limit exceeded.";
+    if (ws.totalImportedBytes + prov.importedBytes > LIMITS.MAX_TOTAL_BYTES) {
+      return `Cumulative imported bytes would exceed ${LIMITS.MAX_TOTAL_BYTES} (current ${ws.totalImportedBytes}, incoming ${prov.importedBytes}).`;
+    }
     const existingKeys = new Set(ws.runs.map((r) => `${r.run_id}||${r.metric}`));
     for (const r of runs) {
       if (existingKeys.has(`${r.run_id}||${r.metric}`)) return `Duplicate run_id+metric with existing workspace: ${r.run_id}/${r.metric}. Use remapping.`;
@@ -60,7 +63,13 @@ export default function App() {
     void byExample;
     const knownDefIds = new Set([...VERIFIED_METRICS.map((d) => d.id), ...ws.metricDefinitions.map((d) => d.id)]);
     const newDefs = incomingDefs.filter((d) => !knownDefIds.has(d.id));
-    const newTotalBytes = ws.totalImportedBytes + (prov.acceptedRuns + prov.acceptedExamples);
+    const incomingSynthetic = runs.some((r) => r.is_synthetic);
+    const incomingReal = runs.some((r) => !r.is_synthetic);
+    if ((ws.runs.some((r) => r.is_synthetic) && incomingReal) || (ws.runs.some((r) => !r.is_synthetic) && incomingSynthetic)) {
+      const ok = window.confirm("This import would place synthetic and non-synthetic rows in the same workspace. They will stay in separate cohorts and never pool. Continue?");
+      if (!ok) return "Import cancelled: mixed synthetic/real confirmation was declined.";
+    }
+    const newTotalBytes = ws.totalImportedBytes + prov.importedBytes;
     setWs({
       runs: [...ws.runs, ...runs],
       examples: [...ws.examples, ...examples],
@@ -78,6 +87,10 @@ export default function App() {
       const ok = window.confirm("Loading demo data will add to the current workspace. Unsaved imported work is in memory. Continue? (Cancel keeps your work; Clear workspace first to start fresh.)");
       if (!ok) return;
     }
+    if (ws.runs.some((r) => !r.is_synthetic)) {
+      const ok = window.confirm("The workspace already has non-synthetic rows. Demo data is synthetic and will stay in a separate cohort. Continue?");
+      if (!ok) return;
+    }
     const demo = buildDemoWorkspace();
     const existingKeys = new Set(ws.runs.map((r) => `${r.run_id}||${r.metric}`));
     const freshRuns = demo.runs.filter((r) => !existingKeys.has(`${r.run_id}||${r.metric}`));
@@ -93,6 +106,7 @@ export default function App() {
       rejectedRuns: demo.runs.length - freshRuns.length,
       acceptedExamples: freshExamples.length,
       rejectedExamples: demo.examples.length - freshExamples.length,
+      importedBytes: 0,
       note: "Synthetic content persistently labeled.",
     };
     setWs((s) => ({
@@ -128,15 +142,10 @@ export default function App() {
   }
 
   function exportSummaryCsv() {
-    const groups = new Map<string, { label: string; runs: typeof ws.runs }>();
-    for (const r of ws.runs) {
-      const { key } = cohortKeyFor(r, defs);
-      const e = groups.get(key);
-      if (!e) groups.set(key, { label: key, runs: [r] });
-      else e.runs.push(r);
-    }
+    const groups = controlledCohorts(ws.runs, defs);
     const rows: SummaryRow[] = [];
-    for (const [key, g] of groups) {
+    for (const g of groups) {
+      const key = g.key;
       const first = g.runs[0];
       for (const s of summarizeCohort(g.runs, candidateLabel)) {
         rows.push({
