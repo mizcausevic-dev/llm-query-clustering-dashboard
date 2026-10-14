@@ -26,3 +26,9 @@ Date: 2026-10-13 (UTC). Environment: Windows 10.0.26200, Node v24.11.0, npm 11.6
 ## What was NOT run
 
 - No cross-browser E2E (chromium only), no axe accessibility scan, no SAST/DAST beyond above, no parser fuzzing, no `npm ci` clean-room repro (used `npm install`; lockfile present so `npm ci` expected to work but not executed).
+
+## GitHub release (2026-10-13, owner-confirmed)
+
+- Pre-public gate (preflight-security): Gate 3 history `gitleaks detect --source . --log-opts="--all" --redact` = no leaks (1 commit scanned); Gate 4 CI = N/A (no workflows, Dockerfiles, or deploy scripts in repo); Gate 5 topology = clean (no hostnames, IPs, usernames, env references in `src`; no `.env` files). No STOP conditions triggered.
+- Created private repo `mizcausevic-dev/llm-query-clustering-dashboard`, pushed `main` (commit `79aae1c` + branch rename). About + 8 topics set and verified via `gh repo view`.
+- Secret scanning + push protection: NOT enabled, GitHub returns HTTP 422 (unavailable on private personal repos without GHAS). Compensating control: local gitleaks pre-commit hook active (it demonstrably blocked once on a pattern-name false positive, since reworded). Flipping the repo to public would enable free secret scanning and push protection.
